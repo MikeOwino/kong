@@ -10,6 +10,12 @@ for _, strategy in helpers.each_strategy() do
     lazy_setup(function()
       assert(helpers.start_grpc_target())
 
+      -- start_grpc_target takes long time, the db socket might already
+      -- be timeout, so we close it to avoid `db:init_connector` failing
+      -- in `helpers.get_db_utils`
+      helpers.db:connect()
+      helpers.db:close()
+
       local bp = helpers.get_db_utils(strategy, {
         "routes",
         "services",
@@ -97,44 +103,44 @@ for _, strategy in helpers.each_strategy() do
         local res, err = proxy_client:get("/v1/messages/legacy/john_doe?boolean_test=true")
         assert.equal(200, res.status)
         assert.is_nil(err)
-  
+
         local body = res:read_body()
         local data = cjson.decode(body)
         assert.same({reply = "hello john_doe", boolean_test = true}, data)
       end)
-  
+
       test("false", function()
         local res, err = proxy_client:get("/v1/messages/legacy/john_doe?boolean_test=false")
-  
+
         assert.equal(200, res.status)
         assert.is_nil(err)
-  
+
         local body = res:read_body()
         local data = cjson.decode(body)
-  
+
         assert.same({reply = "hello john_doe", boolean_test = false}, data)
       end)
-  
+
       test("zero", function()
         local res, err = proxy_client:get("/v1/messages/legacy/john_doe?boolean_test=0")
-  
+
         assert.equal(200, res.status)
         assert.is_nil(err)
-  
+
         local body = res:read_body()
         local data = cjson.decode(body)
-  
+
         assert.same({reply = "hello john_doe", boolean_test = false}, data)
       end)
-  
+
       test("non-zero", function()
         local res, err = proxy_client:get("/v1/messages/legacy/john_doe?boolean_test=1")
         assert.equal(200, res.status)
         assert.is_nil(err)
-  
+
         local body = res:read_body()
         local data = cjson.decode(body)
-  
+
         assert.same({reply = "hello john_doe", boolean_test = true}, data)
       end)
     end)
@@ -194,5 +200,61 @@ for _, strategy in helpers.each_strategy() do
       }, cjson.decode(body))
     end)
 
+    test("null in json", function()
+      local res, _ = proxy_client:post("/bounce", {
+        headers = { ["Content-Type"] = "application/json" },
+        body = { message = cjson.null },
+      })
+      assert.equal(400, res.status)
+    end)
+
+    test("invalid json", function()
+      local res, _ = proxy_client:post("/bounce", {
+        headers = { ["Content-Type"] = "application/json" },
+        body = [[{"message":"invalid}]]
+      })
+      assert.equal(400, res.status)
+      assert.same(res:read_body(),"decode json err: Expected value but found unexpected end of string at character 21")
+    end)
+
+    test("field type mismatch", function()
+      local res, _ = proxy_client:post("/bounce", {
+        headers = { ["Content-Type"] = "application/json" },
+        body = [[{"message":1}]]
+      })
+      assert.equal(400, res.status)
+      assert.same(res:read_body(),"failed to encode payload")
+    end)
+
+    describe("regression", function()
+      test("empty array in json #10801", function()
+        local req_body = { array = {}, nullable = "ahaha" }
+        local res, _ = proxy_client:post("/v1/echo", {
+          headers = { ["Content-Type"] = "application/json" },
+          body = req_body,
+        })
+        assert.equal(200, res.status)
+  
+        local body = res:read_body()
+        assert.same(req_body, cjson.decode(body))
+        -- it should be encoded as empty array in json instead of `null` or `{}`
+        assert.matches("[]", body, nil, true)
+      end)
+  
+      -- Bug found when test FTI-5002's fix. It will be fixed in another PR.
+      test("empty message #10802", function()
+        local req_body = { array = {}, nullable = "" }
+        local res, _ = proxy_client:post("/v1/echo", {
+          headers = { ["Content-Type"] = "application/json" },
+          body = req_body,
+        })
+        assert.equal(200, res.status)
+  
+        local body = res:read_body()
+        assert.same(req_body, cjson.decode(body))
+        -- it should be encoded as empty array in json instead of `null` or `{}`
+        assert.matches("[]", body, nil, true)
+      end)
+    end)
   end)
 end

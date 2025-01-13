@@ -2,17 +2,8 @@ require("spec.helpers") -- for kong.log
 local declarative = require "kong.db.declarative"
 local conf_loader = require "kong.conf_loader"
 
-local to_hex = require("resty.string").to_hex
-local resty_sha256 = require "resty.sha256"
-
 local null = ngx.null
 
-
-local function sha256(s)
-  local sha = resty_sha256:new()
-  sha:update(s)
-  return to_hex(sha:final())
-end
 
 describe("declarative", function()
   describe("parse_string", function()
@@ -57,16 +48,19 @@ keyauth_credentials:
 
   describe("unique_field_key()", function()
     local unique_field_key = declarative.unique_field_key
+    local sha256_hex = require("kong.tools.sha256").sha256_hex
 
     it("utilizes the schema name, workspace id, field name, and checksum of the field value", function()
       local key = unique_field_key("services", "123", "fieldname", "test", false)
       assert.is_string(key)
-      assert.equals("services|123|fieldname:" .. sha256("test"), key)
+      assert.equals("U|services|fieldname|123|" .. sha256_hex("test"), key)
     end)
 
-    it("omits the workspace id when 'unique_across_ws' is 'true'", function()
+    -- since rpc sync the param `unique_across_ws` is useless
+    -- this test case is just for compatibility
+    it("does not omits the workspace id when 'unique_across_ws' is 'true'", function()
       local key = unique_field_key("services", "123", "fieldname", "test", true)
-      assert.equals("services||fieldname:" .. sha256("test"), key)
+      assert.equals("U|services|fieldname|123|" .. sha256_hex("test"), key)
     end)
   end)
 
